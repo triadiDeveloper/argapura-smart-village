@@ -1,0 +1,8 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {resolveApi,apiMiddleware} from './api.mjs';
+const url=(path)=>new URL(path,'http://localhost');
+function request(path,method='GET'){return new Promise(resolve=>{const res={setHeader(){},end(body){resolve({status:this.statusCode,body:JSON.parse(body)})}};void apiMiddleware({url:path,method},res,()=>resolve({status:404}));})}
+test('only fixed external hosts and validated parameters',()=>{assert.match(resolveApi(url('/api/weather?adm4=31.71.03.1001'))[0],/^https:\/\/api.bmkg.go.id\//);assert.equal(resolveApi(url('/api/weather?adm4=https://evil.test')),undefined);assert.equal(resolveApi(url('/api/news?category=../../x')),undefined);assert.equal(resolveApi(url('/api/regions?level=villages&id=../x')),undefined);assert.equal(resolveApi(url('/api/unknown')),undefined)});
+test('health, method and invalid input',async()=>{assert.equal((await request('/api/health')).status,200);assert.equal((await request('/api/news','POST')).status,405);assert.equal((await request('/api/unknown')).status,400)});
+test('cache and concurrent upstream coalescing; failure is explicit',async()=>{const original=globalThis.fetch;let calls=0;try{globalThis.fetch=async()=>{calls++;await new Promise(r=>setTimeout(r,15));return new Response(JSON.stringify({data:{posts:[]}}))};const results=await Promise.all([request('/api/news'),request('/api/news')]);assert.equal(results[0].status,200);assert.equal(results[1].status,200);assert.equal(calls,1);assert.equal((await request('/api/news')).body.stale,false);assert.equal(calls,1);globalThis.fetch=async()=>{throw Error('mock outage')};assert.equal((await request('/api/news?category=politik')).status,503)}finally{globalThis.fetch=original}});
